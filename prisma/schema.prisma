@@ -1,0 +1,88 @@
+// Skema database Jurnalku (PostgreSQL / Supabase)
+// Jalankan:  npx prisma db push
+
+generator client {
+  provider      = "prisma-client-js"
+  // rhel-openssl-3.0.x diperlukan agar Prisma berjalan di Vercel (serverless Linux)
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooler (6543) untuk runtime
+  directUrl = env("DIRECT_URL")   // koneksi langsung / session pooler untuk migrasi
+}
+
+enum JournalStatus {
+  draft
+  published
+
+  @@map("journal_status")
+}
+
+enum Visibility {
+  private
+  public
+  protected
+
+  @@map("journal_visibility")
+}
+
+/// Profil pemilik jurnal. `id` sama dengan id user di Supabase Auth (auth.users.id).
+/// Password sebenarnya disimpan & di-hash oleh Supabase Auth, jadi kolom
+/// password_hash dibiarkan opsional (tidak dipakai).
+model User {
+  id           String    @id @db.Uuid
+  email        String    @unique
+  passwordHash String?   @map("password_hash")
+  name         String
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  journals     Journal[]
+
+  @@map("users")
+}
+
+model Journal {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String        @map("user_id") @db.Uuid
+  title      String        @default("")
+  slug       String        @unique
+  /// Dokumen Tiptap (JSON)
+  content    Json          @default("{}")
+  /// Teks polos hasil ekstraksi content — untuk pencarian
+  contentText String       @default("") @map("content_text")
+  /// Cuplikan 180 karakter untuk daftar/kartu
+  excerpt    String        @default("")
+  status     JournalStatus @default(draft)
+  visibility Visibility    @default(private)
+  /// Hash bcrypt, hanya terisi jika visibility = protected
+  passwordHash String?     @map("password_hash")
+  /// Pembatasan percobaan password (anti brute-force)
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  lockedUntil    DateTime? @map("locked_until") @db.Timestamptz(6)
+  mood       String?
+  category   String?
+  tags       String[]      @default([])
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  media Media[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, status])
+  @@map("journals")
+}
+
+model Media {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  journalId String?  @map("journal_id") @db.Uuid
+  url       String
+  fileType  String   @map("file_type")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  journal Journal? @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@index([journalId])
+  @@map("media")
+}
